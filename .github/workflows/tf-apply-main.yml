@@ -1,6 +1,5 @@
 name: 'Terraform Apply'
 
-
 on:
   workflow_dispatch:
     inputs:
@@ -79,7 +78,13 @@ jobs:
     - name: Terraform Plan Status
       if: steps.plan.outcome == 'failure'
       run: exit 1
-    
+
+    # **Nuovo step: rimuovere la risorsa fantasma goat_role**
+    - name: Remove ghost resource from state
+      run: |
+        cd modules/${{ github.event.inputs.module }}
+        terraform state rm aws_iam_role.goat_role || echo "Resource not present in state, skipping"
+
     - name: Terraform Apply
       run: | 
         cd modules/${{ github.event.inputs.module }}
@@ -98,3 +103,4 @@ jobs:
       run: |
         cd modules/${{ github.event.inputs.module }}
         terraform output
+
