@@ -3625,17 +3625,17 @@ resource "aws_dynamodb_table" "users_table" {
   }
 }
 resource "aws_dynamodb_table" "posts_table" {
-  name           = "blog-posts"
-  billing_mode   = "PROVISIONED"
-  read_capacity  = 2
-  write_capacity = 2
+  name         = "blog_posts"
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key = "id"
+
   attribute {
     name = "id"
     type = "S"
   }
 }
+
 
 
 resource "null_resource" "populate_table" {
