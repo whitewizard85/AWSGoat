@@ -3612,21 +3612,22 @@ resource "aws_instance" "goat_instance" {
 }
 
 
+resource "random_pet" "suffix" {
+  length = 2
+}
+
 resource "aws_dynamodb_table" "users_table" {
-  name           = "blog-users"
-  billing_mode   = "PROVISIONED"
-  read_capacity  = 2
-  write_capacity = 2
+  name         = "blog-users-${random_pet.suffix.id}"
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key = "email"
+
   attribute {
     name = "email"
     type = "S"
   }
 }
-resource "random_pet" "suffix" {
-  length = 2
-}
+
 
 resource "aws_dynamodb_table" "posts_table" {
   name         = "blog_posts_${random_pet.suffix.id}"
