@@ -3428,9 +3428,15 @@ resource "aws_s3_bucket" "bucket_tf_files" {
 
 # VPC to deploy web app
 
-data "aws_vpc" "existing" {
-  id = "vpc-0abcd1234ef56789"  # qui metti il tuo VPC ID esistente
+resource "aws_vpc" "goat_vpc" {
+  cidr_block           = "192.168.0.0/16"
+  instance_tenancy     = "default"
+  enable_dns_hostnames = true
+  tags = {
+    Name = "AWS_GOAT_VPC"
+  }
 }
+
 
 resource "aws_internet_gateway" "goat_gw" {
   vpc_id = data.aws_vpc.existing.id
