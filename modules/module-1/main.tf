@@ -3624,6 +3624,10 @@ resource "aws_dynamodb_table" "users_table" {
     type = "S"
   }
 }
+resource "random_pet" "suffix" {
+  length = 2
+}
+
 resource "aws_dynamodb_table" "posts_table" {
   name         = "blog_posts_${random_pet.suffix.id}"
   billing_mode = "PAY_PER_REQUEST"
@@ -3635,13 +3639,6 @@ resource "aws_dynamodb_table" "posts_table" {
     type = "S"
   }
 }
-
-
-resource "random_pet" "suffix" {
-  length = 2
-}
-
-
 
 resource "null_resource" "populate_table" {
   provisioner "local-exec" {
