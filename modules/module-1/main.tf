@@ -3625,7 +3625,7 @@ resource "aws_dynamodb_table" "users_table" {
   }
 }
 resource "aws_dynamodb_table" "posts_table" {
-  name         = "blog_posts"
+  name         = "blog_posts_${random_pet.suffix.id}"
   billing_mode = "PAY_PER_REQUEST"
 
   hash_key = "id"
@@ -3634,6 +3634,11 @@ resource "aws_dynamodb_table" "posts_table" {
     name = "id"
     type = "S"
   }
+}
+
+
+resource "random_pet" "suffix" {
+  length = 2
 }
 
 
