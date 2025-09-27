@@ -3428,16 +3428,12 @@ resource "aws_s3_bucket" "bucket_tf_files" {
 
 # VPC to deploy web app
 
-resource "aws_vpc" "goat_vpc" {
-  cidr_block           = "192.168.0.0/16"
-  instance_tenancy     = "default"
-  enable_dns_hostnames = true
-  tags = {
-    Name = "AWS_GOAT_VPC"
-  }
+data "aws_vpc" "existing" {
+  id = "vpc-0abcd1234ef56789"  # qui metti il tuo VPC ID esistente
 }
+
 resource "aws_internet_gateway" "goat_gw" {
-  vpc_id = aws_vpc.goat_vpc.id
+  vpc_id = data.aws_vpc.existing.id
   tags = {
     Name = "app gateway"
   }
@@ -3453,7 +3449,7 @@ resource "aws_subnet" "goat_subnet" {
 }
 
 resource "aws_route_table" "goat_rt" {
-  vpc_id = aws_vpc.goat_vpc.id
+  vpc_id = data.aws_vpc.existing.id
   route {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.goat_gw.id
