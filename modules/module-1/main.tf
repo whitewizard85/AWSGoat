@@ -29,16 +29,6 @@ resource "aws_lambda_function" "react_lambda_app" {
   depends_on    = [data.archive_file.lambda_zip, null_resource.file_replacement_lambda_react]
 }
 
-data "aws_vpc" "id" {
-  # Add a filter for your VPC, e.g. by tags or CIDR
-  # Example:
-  # filter {
-  #   name   = "tag:Name"
-  #   values = ["your-vpc-name"]
-  # }
-  # Or use default VPC
-  default = true
-}
 
 /* Lambda iam Role */
 
@@ -3447,9 +3437,19 @@ resource "aws_vpc" "goat_vpc" {
   }
 }
 
+resource "aws_vpc" "goat_vpc" {
+  cidr_block           = "192.168.0.0/16"    # adjust to your network
+  instance_tenancy     = "default"
+  enable_dns_hostnames = true
+  enable_dns_support   = true
+
+  tags = {
+    Name = "AWS_GOAT_VPC"
+  }
+}
 
 resource "aws_internet_gateway" "goat_gw" {
-  vpc_id = data.aws_vpc.id
+  vpc_id = aws_vpc.goat_vpc.id
   tags = {
     Name = "app gateway"
   }
@@ -3465,7 +3465,7 @@ resource "aws_subnet" "goat_subnet" {
 }
 
 resource "aws_route_table" "goat_rt" {
-  vpc_id = data.aws_vpc.id
+  vpc_id = aws_vpc.goat_vpc.id
   route {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.goat_gw.id
@@ -3730,3 +3730,4 @@ EOF
 output "app_url" {
   value = "${aws_api_gateway_stage.api.invoke_url}/react"
 }
+
