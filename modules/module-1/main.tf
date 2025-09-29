@@ -3437,17 +3437,6 @@ resource "aws_vpc" "goat_vpc" {
   }
 }
 
-resource "aws_vpc" "goat_vpc" {
-  cidr_block           = "192.168.0.0/16"    # adjust to your network
-  instance_tenancy     = "default"
-  enable_dns_hostnames = true
-  enable_dns_support   = true
-
-  tags = {
-    Name = "AWS_GOAT_VPC"
-  }
-}
-
 resource "aws_internet_gateway" "goat_gw" {
   vpc_id = aws_vpc.goat_vpc.id
   tags = {
@@ -3730,4 +3719,3 @@ EOF
 output "app_url" {
   value = "${aws_api_gateway_stage.api.invoke_url}/react"
 }
-
