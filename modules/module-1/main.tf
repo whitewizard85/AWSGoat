@@ -3465,7 +3465,7 @@ resource "aws_subnet" "goat_subnet" {
 }
 
 resource "aws_route_table" "goat_rt" {
-  vpc_id = data.aws_vpc.existing.id
+  vpc_id = data.aws_vpc.id
   route {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.goat_gw.id
