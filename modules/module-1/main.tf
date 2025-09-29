@@ -29,6 +29,16 @@ resource "aws_lambda_function" "react_lambda_app" {
   depends_on    = [data.archive_file.lambda_zip, null_resource.file_replacement_lambda_react]
 }
 
+data "aws_vpc" "id" {
+  # Add a filter for your VPC, e.g. by tags or CIDR
+  # Example:
+  # filter {
+  #   name   = "tag:Name"
+  #   values = ["your-vpc-name"]
+  # }
+  # Or use default VPC
+  default = true
+}
 
 /* Lambda iam Role */
 
