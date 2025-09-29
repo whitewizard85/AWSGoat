@@ -3436,7 +3436,6 @@ resource "aws_vpc" "goat_vpc" {
     Name = "AWS_GOAT_VPC"
   }
 }
-
 resource "aws_internet_gateway" "goat_gw" {
   vpc_id = aws_vpc.goat_vpc.id
   tags = {
@@ -3613,34 +3612,31 @@ resource "aws_instance" "goat_instance" {
 }
 
 
-resource "random_pet" "suffix" {
-  length = 2
-}
-
 resource "aws_dynamodb_table" "users_table" {
-  name         = "blog-users-${random_pet.suffix.id}"
-  billing_mode = "PAY_PER_REQUEST"
+  name           = "blog-users"
+  billing_mode   = "PROVISIONED"
+  read_capacity  = 2
+  write_capacity = 2
 
   hash_key = "email"
-
   attribute {
     name = "email"
     type = "S"
   }
 }
-
-
 resource "aws_dynamodb_table" "posts_table" {
-  name         = "blog_posts_${random_pet.suffix.id}"
-  billing_mode = "PAY_PER_REQUEST"
+  name           = "blog-posts"
+  billing_mode   = "PROVISIONED"
+  read_capacity  = 2
+  write_capacity = 2
 
   hash_key = "id"
-
   attribute {
     name = "id"
     type = "S"
   }
 }
+
 
 resource "null_resource" "populate_table" {
   provisioner "local-exec" {
