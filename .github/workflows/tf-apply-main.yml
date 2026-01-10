@@ -51,19 +51,15 @@ jobs:
         echo "ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_ENV"
 
     # ------------------------------------------------------------
-    # Ensure S3 bucket for Terraform state exists
+    # Ensure Terraform state S3 bucket exists
     # ------------------------------------------------------------
     - name: Ensure Terraform state S3 bucket exists
       run: |
         BUCKET="do-not-delete-awsgoat-state-files-${ACCOUNT_ID}"
 
-        echo "Checking S3 bucket: $BUCKET"
-
         if aws s3 ls "s3://$BUCKET" >/dev/null 2>&1; then
           echo "Bucket already exists"
         else
-          echo "Bucket does not exist, creating"
-
           if [ "$AWS_REGION" = "us-east-1" ]; then
             aws s3api create-bucket --bucket "$BUCKET"
           else
@@ -72,8 +68,6 @@ jobs:
               --region "$AWS_REGION" \
               --create-bucket-configuration LocationConstraint="$AWS_REGION"
           fi
-
-          echo "Bucket created"
         fi
 
     # ------------------------------------------------------------
@@ -85,7 +79,7 @@ jobs:
         terraform init
 
     # ------------------------------------------------------------
-    # Auto-import existing AWS resources
+    # Auto-import existing AWS resources (VPC-safe)
     # ------------------------------------------------------------
     - name: Auto-import existing AWS resources
       run: |
@@ -94,7 +88,6 @@ jobs:
         import_if_missing () {
           ADDRESS="$1"
           IMPORT_ID="$2"
-
           if terraform state show "$ADDRESS" >/dev/null 2>&1; then
             echo "✔ $ADDRESS already in state"
           else
@@ -103,31 +96,49 @@ jobs:
           fi
         }
 
+        # ------------------------------
+        # VPC: check by tag or name and import
+        # ------------------------------
+        VPC_NAME="lab-vpc"
+        EXISTING_VPC_ID=$(aws ec2 describe-vpcs \
+          --filters "Name=tag:Name,Values=${VPC_NAME}" \
+          --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "")
+
+        if [ -n "$EXISTING_VPC_ID" ]; then
+          echo "✔ Found existing VPC $VPC_NAME ($EXISTING_VPC_ID), importing"
+          terraform import aws_vpc.lab-vpc "$EXISTING_VPC_ID"
+        else
+          echo "➜ No existing VPC found, Terraform will create one"
+        fi
+
+        # ------------------------------
         # IAM Policies
+        # ------------------------------
         import_if_missing aws_iam_policy.ecs_instance_policy arn:aws:iam::${ACCOUNT_ID}:policy/aws-goat-instance-policy
         import_if_missing aws_iam_policy.instance_boundary_policy arn:aws:iam::${ACCOUNT_ID}:policy/aws-goat-instance-boundary-policy
 
+        # ------------------------------
         # IAM Roles
+        # ------------------------------
         import_if_missing aws_iam_role.ecs-instance-role ecs-instance-role
 
+        # ------------------------------
         # Secrets Manager
+        # ------------------------------
         import_if_missing aws_secretsmanager_secret.rds_creds RDS_CREDS
 
-        # ------------------------------------------------------------
-        # DB Subnet Group: auto-import or create unique name
-        # ------------------------------------------------------------
+        # ------------------------------
+        # DB Subnet Group (auto-import or create unique name)
+        # ------------------------------
         DB_SUBNET_GROUP_NAME="database-subnets-${{ github.event.inputs.module }}"
-
         if terraform state show aws_db_subnet_group.database-subnet-group >/dev/null 2>&1; then
           echo "✔ DB Subnet Group already in state"
         else
-          # Check if a group with default name exists in AWS
           if aws rds describe-db-subnet-groups --db-subnet-group-name database-subnets >/dev/null 2>&1; then
             echo "➜ database-subnets exists in AWS, importing"
             terraform import aws_db_subnet_group.database-subnet-group database-subnets
           else
             echo "➜ DB Subnet Group does not exist, will create as $DB_SUBNET_GROUP_NAME"
-            # override name in Terraform via env var (in main.tf: use var.db_subnet_group_name)
             echo "DB_SUBNET_GROUP_NAME=$DB_SUBNET_GROUP_NAME" >> $GITHUB_ENV
           fi
         fi
@@ -155,12 +166,9 @@ jobs:
       if: always()
       run: |
         cd modules/${{ github.event.inputs.module }}
-
         if [ -f terraform.tfstate ]; then
           aws s3 cp terraform.tfstate \
             s3://do-not-delete-awsgoat-state-files-${ACCOUNT_ID}/terraform.tfstate
-        else
-          echo "terraform.tfstate not found, skipping upload"
         fi
 
     # ------------------------------------------------------------
