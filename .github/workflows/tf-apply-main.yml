@@ -44,7 +44,7 @@ jobs:
         terraform_version: 1.10.5
 
     # ------------------------------------------------------------
-    # Resolve AWS Account ID
+    # Set AWS Account ID
     # ------------------------------------------------------------
     - name: Set AWS Account ID
       run: |
@@ -85,9 +85,9 @@ jobs:
         terraform init
 
     # ------------------------------------------------------------
-    # AUTO-IMPORT: recover from partial executions
+    # Auto-import resources already existing in AWS
     # ------------------------------------------------------------
-    - name: Auto-import existing AWS resources into Terraform state
+    - name: Auto-import existing AWS resources
       run: |
         cd modules/${{ github.event.inputs.module }}
 
@@ -104,23 +104,17 @@ jobs:
         }
 
         # IAM Policies
-        import_if_missing \
-          aws_iam_policy.ecs_instance_policy \
-          arn:aws:iam::${ACCOUNT_ID}:policy/aws-goat-instance-policy
+        import_if_missing aws_iam_policy.ecs_instance_policy arn:aws:iam::${ACCOUNT_ID}:policy/aws-goat-instance-policy
+        import_if_missing aws_iam_policy.instance_boundary_policy arn:aws:iam::${ACCOUNT_ID}:policy/aws-goat-instance-boundary-policy
 
-        import_if_missing \
-          aws_iam_policy.instance_boundary_policy \
-          arn:aws:iam::${ACCOUNT_ID}:policy/aws-goat-instance-boundary-policy
+        # IAM Roles
+        import_if_missing aws_iam_role.ecs-instance-role ecs-instance-role
 
         # DB Subnet Group
-        import_if_missing \
-          aws_db_subnet_group.database-subnet-group \
-          database-subnets
+        import_if_missing aws_db_subnet_group.database-subnet-group database-subnets
 
         # Secrets Manager
-        import_if_missing \
-          aws_secretsmanager_secret.rds_creds \
-          RDS_CREDS
+        import_if_missing aws_secretsmanager_secret.rds_creds RDS_CREDS
 
     # ------------------------------------------------------------
     # Terraform plan
