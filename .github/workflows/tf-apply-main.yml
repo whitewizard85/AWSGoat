@@ -77,30 +77,50 @@ jobs:
         fi
 
     # ------------------------------------------------------------
-    # Check for existing deployment (state already present)
-    # ------------------------------------------------------------
-    - name: Check previous AWSGoat deployment
-      id: check
-      continue-on-error: true
-      run: |
-        aws s3api head-object \
-          --bucket "do-not-delete-awsgoat-state-files-${ACCOUNT_ID}" \
-          --key "terraform.tfstate"
-
-    - name: Abort if previous deployment exists
-      if: steps.check.outcome == 'success'
-      run: |
-        echo "A previous AWSGoat deployment already exists."
-        echo "Run the Terraform Destroy workflow before applying again."
-        exit 1
-
-    # ------------------------------------------------------------
     # Terraform init
     # ------------------------------------------------------------
     - name: Terraform Init
       run: |
         cd modules/${{ github.event.inputs.module }}
         terraform init
+
+    # ------------------------------------------------------------
+    # AUTO-IMPORT: recover from partial executions
+    # ------------------------------------------------------------
+    - name: Auto-import existing AWS resources into Terraform state
+      run: |
+        cd modules/${{ github.event.inputs.module }}
+
+        import_if_missing () {
+          ADDRESS="$1"
+          IMPORT_ID="$2"
+
+          if terraform state show "$ADDRESS" >/dev/null 2>&1; then
+            echo "✔ $ADDRESS already in state"
+          else
+            echo "➜ Importing $ADDRESS"
+            terraform import "$ADDRESS" "$IMPORT_ID" || echo "⚠ Import failed, continuing"
+          fi
+        }
+
+        # IAM Policies
+        import_if_missing \
+          aws_iam_policy.ecs_instance_policy \
+          arn:aws:iam::${ACCOUNT_ID}:policy/aws-goat-instance-policy
+
+        import_if_missing \
+          aws_iam_policy.instance_boundary_policy \
+          arn:aws:iam::${ACCOUNT_ID}:policy/aws-goat-instance-boundary-policy
+
+        # DB Subnet Group
+        import_if_missing \
+          aws_db_subnet_group.database-subnet-group \
+          database-subnets
+
+        # Secrets Manager
+        import_if_missing \
+          aws_secretsmanager_secret.rds_creds \
+          RDS_CREDS
 
     # ------------------------------------------------------------
     # Terraform plan
@@ -111,19 +131,6 @@ jobs:
         terraform plan -input=false
 
     # ------------------------------------------------------------
-    # Optional cleanup: remove ghost IAM role from state
-    # ------------------------------------------------------------
-    - name: Remove ghost IAM role from state (if present)
-      run: |
-        cd modules/${{ github.event.inputs.module }}
-
-        if [ -f terraform.tfstate ]; then
-          terraform state rm aws_iam_role.goat_role || echo "Role not in state, skipping"
-        else
-          echo "No local state file, skipping state cleanup"
-        fi
-
-    # ------------------------------------------------------------
     # Terraform apply
     # ------------------------------------------------------------
     - name: Terraform Apply
@@ -132,7 +139,7 @@ jobs:
         terraform apply -auto-approve -input=false
 
     # ------------------------------------------------------------
-    # Upload Terraform state to S3 (only if it exists)
+    # Upload local state to S3 (only if it exists)
     # ------------------------------------------------------------
     - name: Upload terraform.tfstate to S3
       if: always()
