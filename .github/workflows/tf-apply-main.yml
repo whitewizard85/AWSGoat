@@ -85,7 +85,7 @@ jobs:
         terraform init
 
     # ------------------------------------------------------------
-    # Auto-import resources already existing in AWS
+    # Auto-import existing AWS resources
     # ------------------------------------------------------------
     - name: Auto-import existing AWS resources
       run: |
@@ -110,11 +110,27 @@ jobs:
         # IAM Roles
         import_if_missing aws_iam_role.ecs-instance-role ecs-instance-role
 
-        # DB Subnet Group
-        import_if_missing aws_db_subnet_group.database-subnet-group database-subnets
-
         # Secrets Manager
         import_if_missing aws_secretsmanager_secret.rds_creds RDS_CREDS
+
+        # ------------------------------------------------------------
+        # DB Subnet Group: auto-import or create unique name
+        # ------------------------------------------------------------
+        DB_SUBNET_GROUP_NAME="database-subnets-${{ github.event.inputs.module }}"
+
+        if terraform state show aws_db_subnet_group.database-subnet-group >/dev/null 2>&1; then
+          echo "✔ DB Subnet Group already in state"
+        else
+          # Check if a group with default name exists in AWS
+          if aws rds describe-db-subnet-groups --db-subnet-group-name database-subnets >/dev/null 2>&1; then
+            echo "➜ database-subnets exists in AWS, importing"
+            terraform import aws_db_subnet_group.database-subnet-group database-subnets
+          else
+            echo "➜ DB Subnet Group does not exist, will create as $DB_SUBNET_GROUP_NAME"
+            # override name in Terraform via env var (in main.tf: use var.db_subnet_group_name)
+            echo "DB_SUBNET_GROUP_NAME=$DB_SUBNET_GROUP_NAME" >> $GITHUB_ENV
+          fi
+        fi
 
     # ------------------------------------------------------------
     # Terraform plan
