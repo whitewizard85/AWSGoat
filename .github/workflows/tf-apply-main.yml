@@ -30,13 +30,13 @@ jobs:
 
     steps:
     # ------------------------------------------------------------
-    # Checkout
+    # Checkout repository
     # ------------------------------------------------------------
     - name: Checkout repository
       uses: actions/checkout@v4
 
     # ------------------------------------------------------------
-    # Terraform setup
+    # Setup Terraform
     # ------------------------------------------------------------
     - name: Set up Terraform
       uses: hashicorp/setup-terraform@v2
@@ -68,6 +68,7 @@ jobs:
               --region "$AWS_REGION" \
               --create-bucket-configuration LocationConstraint="$AWS_REGION"
           fi
+          echo "Bucket created"
         fi
 
     # ------------------------------------------------------------
@@ -79,7 +80,7 @@ jobs:
         terraform init
 
     # ------------------------------------------------------------
-    # Auto-import existing AWS resources (VPC-safe)
+    # Auto-import existing AWS resources
     # ------------------------------------------------------------
     - name: Auto-import existing AWS resources
       run: |
@@ -97,14 +98,14 @@ jobs:
         }
 
         # ------------------------------
-        # VPC: check by tag or name and import
+        # VPC: import only if it exists
         # ------------------------------
         VPC_NAME="lab-vpc"
         EXISTING_VPC_ID=$(aws ec2 describe-vpcs \
           --filters "Name=tag:Name,Values=${VPC_NAME}" \
           --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "")
 
-        if [ -n "$EXISTING_VPC_ID" ]; then
+        if [ -n "$EXISTING_VPC_ID" ] && [ "$EXISTING_VPC_ID" != "None" ]; then
           echo "✔ Found existing VPC $VPC_NAME ($EXISTING_VPC_ID), importing"
           terraform import aws_vpc.lab-vpc "$EXISTING_VPC_ID"
         else
