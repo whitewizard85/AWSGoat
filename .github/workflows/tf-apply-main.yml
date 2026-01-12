@@ -1,8 +1,146 @@
-- name: Terraform Apply (ALB only)
-  run: |
-    cd modules/${{ github.event.inputs.module }}
-    terraform apply -auto-approve -input=false \
-      -target="aws_lb.app_alb" \
-      -target="aws_security_group.alb_sg" \
-      -target="aws_lb_target_group.app_tg" \
-      -target="aws_lb_listener.http"
+name: Terraform Apply
+
+on:
+  workflow_dispatch:
+    inputs:
+      module:
+        type: choice
+        description: Select which module to deploy
+        options:
+          - module-1
+          - module-2
+        required: true
+
+permissions: write-all
+
+jobs:
+  terraform:
+    name: Terraform
+    runs-on: ubuntu-latest
+    environment: production
+
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-east-1
+
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Set up Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: 1.10.5
+
+    - name: Set AWS Account ID
+      run: |
+        echo "ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_ENV"
+
+    - name: Ensure Terraform state S3 bucket exists
+      run: |
+        BUCKET="do-not-delete-awsgoat-state-files-${ACCOUNT_ID}"
+        if ! aws s3 ls "s3://$BUCKET" >/dev/null 2>&1; then
+          if [ "$AWS_REGION" = "us-east-1" ]; then
+            aws s3api create-bucket --bucket "$BUCKET"
+          else
+            aws s3api create-bucket --bucket "$BUCKET" --region "$AWS_REGION" \
+              --create-bucket-configuration LocationConstraint="$AWS_REGION"
+          fi
+          echo "Bucket $BUCKET created"
+        fi
+
+    # ------------------------------------------------------------
+    # Sync State from S3 (Critical for starting anew)
+    # ------------------------------------------------------------
+    - name: Download state from S3
+      run: |
+        cd modules/${{ github.event.inputs.module }}
+        BUCKET="do-not-delete-awsgoat-state-files-${ACCOUNT_ID}"
+        if aws s3 ls "s3://$BUCKET/terraform.tfstate" >/dev/null 2>&1; then
+          aws s3 cp "s3://$BUCKET/terraform.tfstate" terraform.tfstate
+          echo "✔ Existing state downloaded"
+        else
+          echo "➜ No existing state found in S3"
+        fi
+
+    - name: Terraform Init
+      run: |
+        cd modules/${{ github.event.inputs.module }}
+        terraform init
+
+    # ------------------------------------------------------------
+    # Auto-import & VPC Conflict Prevention
+    # ------------------------------------------------------------
+    - name: Auto-import existing AWS resources
+      run: |
+        cd modules/${{ github.event.inputs.module }}
+        
+        import_if_missing () {
+          ADDRESS="$1"
+          IMPORT_ID="$2"
+          if terraform state show "$ADDRESS" >/dev/null 2>&1; then
+            echo "✔ $ADDRESS already in state"
+          else
+            echo "➜ Importing $ADDRESS"
+            terraform import "$ADDRESS" "$IMPORT_ID" || echo "⚠ Import failed, continuing"
+          fi
+        }
+
+        # Import VPC if it exists
+        VPC_NAME="lab-vpc"
+        EXISTING_VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=${VPC_NAME}" --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "")
+        if [ -n "$EXISTING_VPC_ID" ] && [ "$EXISTING_VPC_ID" != "None" ]; then
+          import_if_missing aws_vpc.lab-vpc "$EXISTING_VPC_ID"
+        fi
+
+        # Import common IAM/Secrets
+        import_if_missing aws_iam_policy.ecs_instance_policy arn:aws:iam::${ACCOUNT_ID}:policy/aws-goat-instance-policy
+        import_if_missing aws_iam_role.ecs-instance-role ecs-instance-role
+        import_if_missing aws_secretsmanager_secret.rds_creds RDS_CREDS
+
+        # DB Subnet Group handling to prevent the VPC Mismatch Error
+        DB_SG_NAME="database-subnets-${{ github.event.inputs.module }}"
+        if ! terraform state show aws_db_subnet_group.database-subnet-group >/dev/null 2>&1; then
+          if aws rds describe-db-subnet-groups --db-subnet-group-name "$DB_SG_NAME" >/dev/null 2>&1; then
+            echo "➜ $DB_SG_NAME exists, importing"
+            terraform import aws_db_subnet_group.database-subnet-group "$DB_SG_NAME"
+          fi
+        fi
+
+    - name: Terraform Plan
+      run: |
+        cd modules/${{ github.event.inputs.module }}
+        terraform plan -input=false
+
+    - name: Terraform Apply
+      run: |
+        cd modules/${{ github.event.inputs.module }}
+        terraform apply -auto-approve -input=false
+
+    # ------------------------------------------------------------
+    # Enhanced Outputs & State Sync
+    # ------------------------------------------------------------
+    - name: Finalize and Upload State
+      if: always()
+      run: |
+        cd modules/${{ github.event.inputs.module }}
+        if [ -f terraform.tfstate ]; then
+          aws s3 cp terraform.tfstate s3://do-not-delete-awsgoat-state-files-${ACCOUNT_ID}/terraform.tfstate
+        fi
+
+    - name: Display App URL
+      run: |
+        cd modules/${{ github.event.inputs.module }}
+        if terraform output -raw ad_Target_URL >/dev/null 2>&1; then
+          URL=$(terraform output -raw ad_Target_URL)
+          echo "### 🚀 Deployment Successful!" >> $GITHUB_STEP_SUMMARY
+          echo "**Access your lab here:** [http://$URL](http://$URL)" >> $GITHUB_STEP_SUMMARY
+          echo "Target URL: http://$URL"
+        else
+          echo "⚠ No output 'ad_Target_URL' found."
+        fi
