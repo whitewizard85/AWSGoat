@@ -54,9 +54,6 @@ jobs:
           echo "Bucket $BUCKET created"
         fi
 
-    # ------------------------------------------------------------
-    # Sync State from S3 (Critical for starting anew)
-    # ------------------------------------------------------------
     - name: Download state from S3
       run: |
         cd modules/${{ github.event.inputs.module }}
@@ -73,9 +70,6 @@ jobs:
         cd modules/${{ github.event.inputs.module }}
         terraform init
 
-    # ------------------------------------------------------------
-    # Auto-import & VPC Conflict Prevention
-    # ------------------------------------------------------------
     - name: Auto-import existing AWS resources
       run: |
         cd modules/${{ github.event.inputs.module }}
@@ -91,40 +85,30 @@ jobs:
           fi
         }
 
-        # Import VPC if it exists
         VPC_NAME="lab-vpc"
         EXISTING_VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=${VPC_NAME}" --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "")
         if [ -n "$EXISTING_VPC_ID" ] && [ "$EXISTING_VPC_ID" != "None" ]; then
           import_if_missing aws_vpc.lab-vpc "$EXISTING_VPC_ID"
         fi
 
-        # Import common IAM/Secrets
         import_if_missing aws_iam_policy.ecs_instance_policy arn:aws:iam::${ACCOUNT_ID}:policy/aws-goat-instance-policy
         import_if_missing aws_iam_role.ecs-instance-role ecs-instance-role
         import_if_missing aws_secretsmanager_secret.rds_creds RDS_CREDS
 
-        # DB Subnet Group handling to prevent the VPC Mismatch Error
-        DB_SG_NAME="database-subnets-${{ github.event.inputs.module }}"
-        if ! terraform state show aws_db_subnet_group.database-subnet-group >/dev/null 2>&1; then
-          if aws rds describe-db-subnet-groups --db-subnet-group-name "$DB_SG_NAME" >/dev/null 2>&1; then
-            echo "➜ $DB_SG_NAME exists, importing"
-            terraform import aws_db_subnet_group.database-subnet-group "$DB_SG_NAME"
-          fi
-        fi
-
+    # -------------------------------------------------------------------------
+    # ECCO I DUE STEP MODIFICATI CON IL FLAG -var
+    # -------------------------------------------------------------------------
     - name: Terraform Plan
       run: |
         cd modules/${{ github.event.inputs.module }}
-        terraform plan -input=false
+        terraform plan -var="module_name=${{ github.event.inputs.module }}" -input=false
 
     - name: Terraform Apply
       run: |
         cd modules/${{ github.event.inputs.module }}
-        terraform apply -auto-approve -input=false
+        terraform apply -var="module_name=${{ github.event.inputs.module }}" -auto-approve -input=false
+    # -------------------------------------------------------------------------
 
-    # ------------------------------------------------------------
-    # Enhanced Outputs & State Sync
-    # ------------------------------------------------------------
     - name: Finalize and Upload State
       if: always()
       run: |
