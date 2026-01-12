@@ -1,11 +1,3 @@
-# ------------------------------------------------------------
-# 1. Variables & Providers
-# ------------------------------------------------------------
-variable "module_name" {
-  type        = string
-  description = "Passed from GitHub Actions"
-}
-
 variable "AWS_REGION" {
   type    = string
   default = "us-east-1"
