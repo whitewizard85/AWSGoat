@@ -1,3 +1,16 @@
+# ------------------------------------------------------------
+# 1. Variables & Providers
+# ------------------------------------------------------------
+variable "module_name" {
+  type        = string
+  description = "Passed from GitHub Actions"
+}
+
+variable "AWS_REGION" {
+  type    = string
+  default = "us-east-1"
+}
+
 terraform {
   required_providers {
     aws = {
@@ -8,7 +21,7 @@ terraform {
 }
 
 provider "aws" {
-  region = "us-east-1"
+  region = var.AWS_REGION
 }
 
 data "aws_caller_identity" "current" {}
@@ -17,7 +30,9 @@ data "aws_availability_zones" "available" {
   state = "available"
 }
 
-# VPC Config for public access
+# ------------------------------------------------------------
+# 2. Network Configuration (VPC, Subnets, IGW)
+# ------------------------------------------------------------
 resource "aws_vpc" "lab-vpc" {
   cidr_block           = "10.0.0.0/16"
   enable_dns_support   = true
@@ -27,53 +42,54 @@ resource "aws_vpc" "lab-vpc" {
   }
 }
 
-resource "aws_subnet" "lab-subnet-public-1" {
+# Renamed to match your LB references (public_1 and public_2)
+resource "aws_subnet" "public_1" {
   vpc_id                  = aws_vpc.lab-vpc.id
   cidr_block              = "10.0.1.0/24"
   map_public_ip_on_launch = true
   availability_zone       = data.aws_availability_zones.available.names[0]
+  tags = { Name = "aws-goat-public-1" }
 }
 
-resource "aws_subnet" "lab-subnet-public-1b" {
+resource "aws_subnet" "public_2" {
   vpc_id                  = aws_vpc.lab-vpc.id
-  cidr_block              = "10.0.128.0/24"
+  cidr_block              = "10.0.2.0/24"
   map_public_ip_on_launch = true
   availability_zone       = data.aws_availability_zones.available.names[1]
+  tags = { Name = "aws-goat-public-2" }
 }
 
 resource "aws_internet_gateway" "my_vpc_igw" {
   vpc_id = aws_vpc.lab-vpc.id
-  tags = {
-    Name = "My VPC - Internet Gateway"
-  }
+  tags   = { Name = "AWS_GOAT_IGW" }
 }
 
-resource "aws_route_table" "my_vpc_us_east_1_public_rt" {
+resource "aws_route_table" "public_rt" {
   vpc_id = aws_vpc.lab-vpc.id
-
   route {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.my_vpc_igw.id
   }
-
-  tags = {
-    Name = "Public Subnet Route Table"
-  }
 }
 
-resource "aws_route_table_association" "my_vpc_us_east_1a_public" {
-  subnet_id      = aws_subnet.lab-subnet-public-1.id
-  route_table_id = aws_route_table.my_vpc_us_east_1_public_rt.id
+resource "aws_route_table_association" "a" {
+  subnet_id      = aws_subnet.public_1.id
+  route_table_id = aws_route_table.public_rt.id
 }
 
-resource "aws_route_table_association" "my_vpc_us_east_1b_public" {
-  subnet_id      = aws_subnet.lab-subnet-public-1b.id
-  route_table_id = aws_route_table.my_vpc_us_east_1_public_rt.id
+resource "aws_route_table_association" "b" {
+  subnet_id      = aws_subnet.public_2.id
+  route_table_id = aws_route_table.public_rt.id
 }
 
-resource "aws_security_group" "load_balancer_security_group" {
-  name        = "Load-Balancer-SG"
-  description = "SG for load balancer created from terraform"
+# ------------------------------------------------------------
+# 3. Security Groups
+# ------------------------------------------------------------
+
+# Renamed to 'alb_sg' to match your LB reference
+resource "aws_security_group" "alb_sg" {
+  name        = "Load-Balancer-SG-${var.module_name}"
+  description = "SG for load balancer"
   vpc_id      = aws_vpc.lab-vpc.id
 
   ingress {
@@ -89,22 +105,17 @@ resource "aws_security_group" "load_balancer_security_group" {
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
-
-  tags = {
-    Name = "aws-goat-m2-sg"
-  }
 }
 
 resource "aws_security_group" "ecs_sg" {
-  name        = "ECS-SG"
-  description = "SG for cluster created from terraform"
+  name        = "ECS-SG-${var.module_name}"
   vpc_id      = aws_vpc.lab-vpc.id
 
   ingress {
     from_port       = 0
     to_port         = 65535
     protocol        = "tcp"
-    security_groups = [aws_security_group.load_balancer_security_group.id]
+    security_groups = [aws_security_group.alb_sg.id]
   }
 
   egress {
@@ -115,46 +126,29 @@ resource "aws_security_group" "ecs_sg" {
   }
 }
 
-# Database Subnet Group
+# ------------------------------------------------------------
+# 4. Database (RDS)
+# ------------------------------------------------------------
 resource "aws_db_subnet_group" "database-subnet-group" {
-  name        = "database-subnets"
-  subnet_ids  = [aws_subnet.lab-subnet-public-1.id, aws_subnet.lab-subnet-public-1b.id]
+  name        = "database-subnets-${var.module_name}"
+  subnet_ids  = [aws_subnet.public_1.id, aws_subnet.public_2.id]
   description = "Subnets for Database Instance"
-
-  tags = {
-    Name = "Database Subnets"
-  }
 }
 
-# Database Security Group
 resource "aws_security_group" "database-security-group" {
-  name        = "Database Security Group"
-  description = "Enable MYSQL Aurora access on Port 3306"
-  vpc_id      = aws_vpc.lab-vpc.id
+  name   = "Database-SG-${var.module_name}"
+  vpc_id = aws_vpc.lab-vpc.id
 
   ingress {
-    description     = "MYSQL/Aurora Access"
     from_port       = 3306
     to_port         = 3306
     protocol        = "tcp"
     security_groups = [aws_security_group.ecs_sg.id]
   }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name = "rds-db-sg"
-  }
 }
 
-# Database Instance
 resource "aws_db_instance" "database-instance" {
-  identifier             = "aws-goat-db"
+  identifier             = "aws-goat-db-${var.module_name}"
   allocated_storage      = 10
   instance_class         = "db.t3.micro"
   engine                 = "mysql"
@@ -163,93 +157,13 @@ resource "aws_db_instance" "database-instance" {
   password               = "T2kVB3zgeN3YbrKS"
   parameter_group_name   = "default.mysql8.0"
   skip_final_snapshot    = true
-  availability_zone      = "us-east-1a"
   db_subnet_group_name   = aws_db_subnet_group.database-subnet-group.name
   vpc_security_group_ids = [aws_security_group.database-security-group.id]
 }
 
-# IAM Roles & Policies (pulite)
-resource "aws_iam_role" "ecs-instance-role" {
-  name                 = "ecs-instance-role"
-  path                 = "/"
-  permissions_boundary = aws_iam_policy.instance_boundary_policy.arn
-
-  assume_role_policy = jsonencode({
-    Version = "2008-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = { Service = "ec2.amazonaws.com" }
-      Action = "sts:AssumeRole"
-    }]
-  })
-}
-
-resource "aws_iam_policy" "ecs_instance_policy" {
-  name = "aws-goat-instance-policy"
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Sid = "Pol1"
-      Effect = "Allow"
-      Action = ["ssm:*", "ssmmessages:*", "ec2:RunInstances", "ec2:Describe*"]
-      Resource = "*"
-    }]
-  })
-}
-
-resource "aws_iam_policy" "instance_boundary_policy" {
-  name = "aws-goat-instance-boundary-policy"
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Sid = "Pol1"
-      Effect = "Allow"
-      Action = [
-        "iam:List*", "iam:Get*", "iam:PassRole", "iam:PutRole*",
-        "ssm:*", "ssmmessages:*",
-        "ec2:RunInstances", "ec2:Describe*",
-        "ecs:*", "ecr:*",
-        "logs:CreateLogStream", "logs:PutLogEvents"
-      ]
-      Resource = "*"
-    }]
-  })
-}
-
-# IAM Attachments
-resource "aws_iam_role_policy_attachment" "ecs-instance-role-attachment-1" {
-  role       = aws_iam_role.ecs-instance-role.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEC2ContainerServiceforEC2Role"
-}
-
-resource "aws_iam_role_policy_attachment" "ecs-instance-role-attachment-2" {
-  role       = aws_iam_role.ecs-instance-role.name
-  policy_arn = "arn:aws:iam::aws:policy/IAMFullAccess"
-}
-
-resource "aws_iam_role_policy_attachment" "ecs-instance-role-attachment-3" {
-  role       = aws_iam_role.ecs-instance-role.name
-  policy_arn = aws_iam_policy.ecs_instance_policy.arn
-}
-
-resource "aws_iam_role_policy_attachment" "ecs-instance-role-attachment-ssm" {
-  role       = aws_iam_role.ecs-instance-role.name
-  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
-}
-
-# Secrets Manager
-resource "aws_secretsmanager_secret" "rds_creds" {
-  name                    = "RDS_CREDS"
-  recovery_window_in_days = 0
-}
-
-resource "aws_secretsmanager_secret_version" "secret_version" {
-  secret_id     = aws_secretsmanager_secret.rds_creds.id
-  secret_string = jsonencode({
-    username = "root"
-    password = "T2kVB3zgeN3YbrKS"
-  })
-}
+# ------------------------------------------------------------
+# 5. Load Balancer
+# ------------------------------------------------------------
 resource "aws_lb" "application_load_balancer" {
   name               = "aws-goat-alb-${var.module_name}"
   internal           = false
@@ -257,7 +171,48 @@ resource "aws_lb" "application_load_balancer" {
   subnets            = [aws_subnet.public_1.id, aws_subnet.public_2.id]
   security_groups    = [aws_security_group.alb_sg.id]
 }
+
+# ------------------------------------------------------------
+# 6. IAM & Secrets
+# ------------------------------------------------------------
+resource "aws_iam_policy" "instance_boundary_policy" {
+  name = "aws-goat-boundary-${var.module_name}"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = ["iam:*", "ec2:*", "s3:*", "ssm:*"]
+      Resource = "*"
+    }]
+  })
+}
+
+resource "aws_iam_role" "ecs-instance-role" {
+  name                 = "ecs-instance-role-${var.module_name}"
+  permissions_boundary = aws_iam_policy.instance_boundary_policy.arn
+  assume_role_policy = jsonencode({
+    Version = "2008-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_secretsmanager_secret" "rds_creds" {
+  name                    = "RDS_CREDS_${var.module_name}"
+  recovery_window_in_days = 0
+}
+
+resource "aws_secretsmanager_secret_version" "secret_version" {
+  secret_id     = aws_secretsmanager_secret.rds_creds.id
+  secret_string = jsonencode({ username = "root", password = "T2kVB3zgeN3YbrKS" })
+}
+
+# ------------------------------------------------------------
+# 7. Outputs
+# ------------------------------------------------------------
 output "ad_Target_URL" {
   value = "${aws_lb.application_load_balancer.dns_name}/login.php"
 }
-
