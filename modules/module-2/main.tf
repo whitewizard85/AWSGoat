@@ -250,8 +250,14 @@ resource "aws_secretsmanager_secret_version" "secret_version" {
     password = "T2kVB3zgeN3YbrKS"
   })
 }
-
+resource "aws_lb" "application_load_balancer" {
+  name               = "aws-goat-alb-${var.module_name}"
+  internal           = false
+  load_balancer_type = "application"
+  subnets            = [aws_subnet.public_1.id, aws_subnet.public_2.id]
+  security_groups    = [aws_security_group.alb_sg.id]
+}
 output "ad_Target_URL" {
-  value = "${aws_alb.application_load_balancer.dns_name}/login.php"
+  value = "${aws_lb.application_load_balancer.dns_name}/login.php"
 }
 
