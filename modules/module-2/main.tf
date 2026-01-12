@@ -1,3 +1,8 @@
+
+variable "module_name" {
+  type        = string
+  description = "Nome del modulo passato da GitHub Actions"
+}
 variable "AWS_REGION" {
   type    = string
   default = "us-east-1"
