@@ -1,130 +1,100 @@
-name: Terraform Apply
+name: 'Terraform Apply'
+
 
 on:
   workflow_dispatch:
     inputs:
       module:
         type: choice
-        description: Select which module to deploy
-        options:
-          - module-1
-          - module-2
+        description: "Select which module to deploy"
+        options: 
+        - module-1
+        - module-2
         required: true
 
 permissions: write-all
 
 jobs:
   terraform:
-    name: Terraform
+    name: 'Terraform'
     runs-on: ubuntu-latest
     environment: production
-
-    env:
+    env: 
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-      AWS_REGION: us-east-1
+      AWS_REGION: "us-east-1"
 
     defaults:
       run:
         shell: bash
 
     steps:
-    - name: Checkout repository
+    - name: Checkout
       uses: actions/checkout@v4
 
     - name: Set up Terraform
-      uses: hashicorp/setup-terraform@v3
+      uses: hashicorp/setup-terraform@v2
       with:
         terraform_version: 1.10.5
 
-    - name: Set AWS Account ID
+    - name: Set Account ID
+      id: account
       run: |
-        echo "ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> "$GITHUB_ENV"
+        echo "ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)" >> $GITHUB_ENV
 
-    - name: Ensure Terraform state S3 bucket exists
+    - name: Check previous AWSGoat Deployment
+      id: check 
       run: |
-        BUCKET="do-not-delete-awsgoat-state-files-${ACCOUNT_ID}"
-        if ! aws s3 ls "s3://$BUCKET" >/dev/null 2>&1; then
-          if [ "$AWS_REGION" = "us-east-1" ]; then
-            aws s3api create-bucket --bucket "$BUCKET"
-          else
-            aws s3api create-bucket --bucket "$BUCKET" --region "$AWS_REGION" \
-              --create-bucket-configuration LocationConstraint="$AWS_REGION"
-          fi
-          echo "Bucket $BUCKET created"
-        fi
+        echo ${{ env.ACCOUNT_ID }}
+        aws s3api head-object --bucket do-not-delete-awsgoat-state-files-${{ env.ACCOUNT_ID }} --key terraform.tfstate
+      continue-on-error: true
 
-    - name: Download state from S3
+    - name: Exit if previous deployment exists
+      if: steps.check.outcome == 'success' 
       run: |
-        cd modules/${{ github.event.inputs.module }}
-        BUCKET="do-not-delete-awsgoat-state-files-${ACCOUNT_ID}"
-        if aws s3 ls "s3://$BUCKET/terraform.tfstate" >/dev/null 2>&1; then
-          aws s3 cp "s3://$BUCKET/terraform.tfstate" terraform.tfstate
-          echo "✔ Existing state downloaded"
-        else
-          echo "➜ No existing state found in S3"
-        fi
+        echo "A Previous AWSGoat deployment exists, run the Terraform Destroy Action"
+        exit 1
 
+    # Initialize a new or existing Terraform working directory 
     - name: Terraform Init
-      run: |
+      run: | 
         cd modules/${{ github.event.inputs.module }}
-        terraform init
-
-    - name: Auto-import existing AWS resources
-      run: |
-        cd modules/${{ github.event.inputs.module }}
+        terraform init 
         
-        import_if_missing () {
-          ADDRESS="$1"
-          IMPORT_ID="$2"
-          if terraform state show "$ADDRESS" >/dev/null 2>&1; then
-            echo "✔ $ADDRESS already in state"
-          else
-            echo "➜ Importing $ADDRESS"
-            terraform import "$ADDRESS" "$IMPORT_ID" || echo "⚠ Import failed, continuing"
-          fi
-        }
-
-        VPC_NAME="lab-vpc"
-        EXISTING_VPC_ID=$(aws ec2 describe-vpcs --filters "Name=tag:Name,Values=${VPC_NAME}" --query "Vpcs[0].VpcId" --output text 2>/dev/null || echo "")
-        if [ -n "$EXISTING_VPC_ID" ] && [ "$EXISTING_VPC_ID" != "None" ]; then
-          import_if_missing aws_vpc.lab-vpc "$EXISTING_VPC_ID"
-        fi
-
-        import_if_missing aws_iam_policy.ecs_instance_policy arn:aws:iam::${ACCOUNT_ID}:policy/aws-goat-instance-policy
-        import_if_missing aws_iam_role.ecs-instance-role ecs-instance-role
-        import_if_missing aws_secretsmanager_secret.rds_creds RDS_CREDS
-
-    # -------------------------------------------------------------------------
-    # ECCO I DUE STEP MODIFICATI CON IL FLAG -var
-    # -------------------------------------------------------------------------
+    # Installs boto3
+    - uses: actions/setup-python@v5
+      with:
+        python-version: 3
+    - name: install
+      run: |
+        pip install boto3
+    
     - name: Terraform Plan
-      run: |
+      id: plan 
+      run: | 
         cd modules/${{ github.event.inputs.module }}
-        terraform plan -var="module_name=${{ github.event.inputs.module }}" -input=false
-
+        terraform plan -input=false
+      continue-on-error: false
+      
+    - name: Terraform Plan Status
+      if: steps.plan.outcome == 'failure'
+      run: exit 1
+    
     - name: Terraform Apply
-      run: |
+      run: | 
         cd modules/${{ github.event.inputs.module }}
-        terraform apply -var="module_name=${{ github.event.inputs.module }}" -auto-approve -input=false
-    # -------------------------------------------------------------------------
+        terraform apply -auto-approve -input=false
+      continue-on-error: false
 
-    - name: Finalize and Upload State
+    # Copy tfstate file to s3 bucket
+    - name: Copy terraform.tfstate file to s3bucket
       if: always()
       run: |
         cd modules/${{ github.event.inputs.module }}
-        if [ -f terraform.tfstate ]; then
-          aws s3 cp terraform.tfstate s3://do-not-delete-awsgoat-state-files-${ACCOUNT_ID}/terraform.tfstate
-        fi
+        aws s3 cp ./terraform.tfstate s3://do-not-delete-awsgoat-state-files-${{ env.ACCOUNT_ID }}/terraform.tfstate 
 
-    - name: Display App URL
+    # Terraform Output the API Gateway url
+    - name: Application URL
       run: |
         cd modules/${{ github.event.inputs.module }}
-        if terraform output -raw ad_Target_URL >/dev/null 2>&1; then
-          URL=$(terraform output -raw ad_Target_URL)
-          echo "### 🚀 Deployment Successful!" >> $GITHUB_STEP_SUMMARY
-          echo "**Access your lab here:** [http://$URL](http://$URL)" >> $GITHUB_STEP_SUMMARY
-          echo "Target URL: http://$URL"
-        else
-          echo "⚠ No output 'ad_Target_URL' found."
-        fi
+        terraform output
